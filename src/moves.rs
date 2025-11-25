@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 pub const DOUBLE_PAWN_PUSH: u16 = 0b0001;
 pub const KING_CASTLE: u16 = 0b0010;
 pub const QUEEN_CASTLE: u16 = 0b0011;
@@ -27,5 +29,18 @@ impl Move {
 
     pub fn flags(&self) -> u16 {
         (self.info >> 12) & 0xF
+    }
+}
+
+impl Display for Move {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}{}{}{}",
+            (b'a' + (self.from() % 8) as u8) as char,
+            (b'1' + (self.from() / 8) as u8) as char,
+            (b'a' + (self.to() % 8) as u8) as char,
+            (b'1' + (self.to() / 8) as u8) as char
+        )
     }
 }

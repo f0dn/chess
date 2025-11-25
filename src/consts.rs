@@ -5,6 +5,13 @@ pub const QUEEN: usize = 3;
 pub const PAWN: usize = 4;
 pub const KING: usize = 5;
 
+pub const BLACK_KNIGHT: usize = KNIGHT + 6;
+pub const BLACK_BISHOP: usize = BISHOP + 6;
+pub const BLACK_ROOK: usize = ROOK + 6;
+pub const BLACK_QUEEN: usize = QUEEN + 6;
+pub const BLACK_PAWN: usize = PAWN + 6;
+pub const BLACK_KING: usize = KING + 6;
+
 pub const PAWN_SQUARES: [i32; 64] = [
     0, 0, 0, 0, 0, 0, 0, 0, //
     50, 50, 50, 50, 50, 50, 50, 50, //
@@ -86,14 +93,14 @@ const fn sliding_moves() -> [[u64; 8]; 64] {
     let mut moves = [[0u64; 8]; 64];
 
     let shifts: [(isize, isize); 8] = [
-        (0, 1),  // West
-        (1, 1),  // NW
-        (1, 0),  // North
-        (1, -1), // NE
-        (0, -1), // East
-        (-1, -1),// SE
-        (-1, 0), // South
-        (-1, 1), // SW
+        (-1, 0),  // West
+        (-1, 1),  // NW
+        (0, 1),  // North
+        (1, 1), // NE
+        (1, 0), // East
+        (1, -1),// SE
+        (0, -1), // South
+        (-1, -1), // SW
     ];
 
     let mut square = 0;
