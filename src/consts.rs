@@ -93,7 +93,6 @@ const fn sliding_moves() -> [[u64; 8]; 64] {
     let mut moves = [[0u64; 8]; 64];
 
     let shifts: [(isize, isize); 8] = [
-        (-1, 0),  // West
         (-1, 1),  // NW
         (0, 1),  // North
         (1, 1), // NE
@@ -101,6 +100,7 @@ const fn sliding_moves() -> [[u64; 8]; 64] {
         (1, -1),// SE
         (0, -1), // South
         (-1, -1), // SW
+        (-1, 0),  // West
     ];
 
     let mut square = 0;
@@ -133,5 +133,5 @@ const fn sliding_moves() -> [[u64; 8]; 64] {
     moves
 }
 
-/// West, NW, North, NE, East, SE, South, SW
+/// NW, North, NE, East, SE, South, SW, West
 pub const SLIDING_MOVES: [[u64; 8]; 64] = sliding_moves();
