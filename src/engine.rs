@@ -1,6 +1,7 @@
 use std::str::SplitWhitespace;
 
 use crate::board::Board;
+use crate::board::print_bitboard;
 use crate::consts::*;
 use crate::moves::*;
 use std::fs::OpenOptions;
@@ -108,6 +109,7 @@ impl Engine {
                 self.board.make_move(mv, piece % 6);
             }
         }
+        self.debug(&format!("Castling rights: {}", self.board.castling_rights));
         self.debug(&format!("Position set to:\n{}", self.board));
     }
 
@@ -120,6 +122,7 @@ impl Engine {
             );
             println!("bestmove {}", best_move);
             self.debug(&format!("Best move chosen: {}", best_move));
+            //print_bitboard(self.board.attacked_squares(1 - self.board.turn));
         }
         //let iter = &mut parts.into_iter();
         //while let Some(param) = iter.next() {

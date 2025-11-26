@@ -5,7 +5,7 @@ use std::io::Write;
 use crate::consts::*;
 use crate::moves::*;
 
-fn print_bitboard(bb: u64) {
+pub fn print_bitboard(bb: u64) {
     for rank in (0..8).rev() {
         for file in 0..8 {
             let square = rank * 8 + file;
@@ -21,7 +21,7 @@ fn print_bitboard(bb: u64) {
 pub struct Board {
     bitboards: [u64; 12],
     pub turn: u8,
-    castling_rights: u8,
+    pub castling_rights: u8,
 }
 
 impl Board {
@@ -265,11 +265,11 @@ impl Board {
         moves
     }
 
-    fn attacked_squares(&self, color: u8) -> u64 {
+    pub fn attacked_squares(&self, color: u8) -> u64 {
         let mut attacks = 0;
 
-        let enemies = self.add_bitboards(&self.color_boards(color));
-        let friendly = self.add_bitboards(&self.color_boards(1 - color));
+        let enemies = self.add_bitboards(&self.color_boards(1 - color));
+        let friendly = self.add_bitboards(&self.color_boards(color));
 
         for (piece, dirs) in [
             (BISHOP, vec![0, 2, 4, 6]),
