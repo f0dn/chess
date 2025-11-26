@@ -1,4 +1,6 @@
 use std::fmt::Display;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 use crate::consts::*;
 use crate::moves::*;
@@ -18,7 +20,7 @@ fn print_bitboard(bb: u64) {
 #[derive(Clone)]
 pub struct Board {
     bitboards: [u64; 12],
-    turn: u8,
+    pub turn: u8,
     castling_rights: u8,
 }
 
@@ -142,8 +144,12 @@ impl Board {
         self.add_bitboards(self.bishops().as_ref()) | self.add_bitboards(self.knights().as_ref())
     }
 
-    fn is_checkmate(&self) -> bool {
-        self.kings().iter().sum::<u64>() == 0
+    fn is_checkmate_self(&self) -> bool {
+        self.bitboards[KING + self.turn as usize * 6] == 0
+    }
+
+    fn is_checkmate_opp(&self) -> bool {
+        self.bitboards[KING + (1 - self.turn) as usize * 6] == 0
     }
 
     fn is_draw(&self) -> bool {
@@ -552,6 +558,19 @@ impl Board {
 
         self.bitboards[piece + 6 * self.turn as usize] ^= from_mask | to_mask;
 
+        if piece == KING {
+            self.castling_rights &=
+                (KING_CASTLE as u8 | QUEEN_CASTLE as u8) << ((1 - self.turn) * 2);
+        }
+
+        if piece == ROOK {
+            for dir in [KING_CASTLE, QUEEN_CASTLE] {
+                if m.from() == CASTLING_ROOK_FROM_SQUARE[self.turn as usize][dir as usize - 1] {
+                    self.castling_rights &= !((dir as u8) << (self.turn * 2));
+                }
+            }
+        }
+
         if flags & CAPTURE != 0 {
             for i in (6 * (1 - self.turn))..(6 * ((1 - self.turn) + 1)) {
                 self.bitboards[i as usize] &= opp_to_mask;
@@ -577,11 +596,24 @@ impl Board {
         mut beta: i32,
         depth: usize,
     ) -> (i32, Option<(Move, usize)>) {
-        if self.is_checkmate() {
+        //self.debug(&format!("Evaluating\n{}", self));
+        if self.is_checkmate_self() {
             return if self.turn == 0 {
                 (i32::MIN + 1, None)
+                //(i32::MIN + (MAX_DEPTH - depth) as i32, None)
             } else {
                 (i32::MAX - 1, None)
+                //(i32::MAX - (MAX_DEPTH - depth) as i32, None)
+            };
+        }
+
+        if self.is_checkmate_opp() {
+            return if self.turn == 0 {
+                (i32::MAX - 1, None)
+                //(i32::MAX - (MAX_DEPTH - depth) as i32, None)
+            } else {
+                (i32::MIN + 1, None)
+                //(i32::MIN + (MAX_DEPTH - depth) as i32, None)
             };
         }
 
@@ -610,6 +642,7 @@ impl Board {
         for (piece, piece_moves) in moves {
             for m in piece_moves {
                 let mut new_board = self.clone();
+                //self.debug(&format!("Making move: {}", m));
                 new_board.make_move(m, piece);
                 let score = new_board.alphabeta(alpha, beta, depth - 1);
 
@@ -633,11 +666,26 @@ impl Board {
             }
         }
 
+        //self.debug(&format!("returning score: {}", best_score));
         (best_score, best_move)
     }
 
     pub fn minimax(&self, depth: usize) -> (i32, Option<(Move, usize)>) {
-        self.alphabeta(i32::MIN, i32::MAX, depth)
+        let res = self.alphabeta(i32::MIN, i32::MAX, depth);
+        self.debug(&format!("Minimax result: {}", res.0));
+        res
+    }
+
+    fn debug(&self, msg: &str) {
+        let debug_file = "/Users/there/Documents/ChessEngine/debug.txt";
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(debug_file)
+            .unwrap();
+
+        writeln!(file, "{}", msg).unwrap();
     }
 }
 

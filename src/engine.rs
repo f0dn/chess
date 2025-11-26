@@ -106,17 +106,21 @@ impl Engine {
                 }
 
                 self.board.make_move(mv, piece % 6);
-                self.debug(&format!("Applied move: {}", mv));
-                self.debug(&format!("Board after move:\n{}", self.board));
             }
         }
+        self.debug(&format!("Position set to:\n{}", self.board));
     }
 
     fn handle_go(&mut self, parts: SplitWhitespace) {
-        let best_move = self.board.minimax(4).1.unwrap().0;
-        println!("info depth 1 score cp 20 nodes 1234 nps 1234 time 1000 pv {}", best_move);
-        println!("bestmove {}", best_move);
-        self.debug(&format!("Best move chosen: {}", best_move));
+        if let (eval, Some((best_move, _))) = self.board.minimax(5) {
+            let cp = eval * if self.board.turn == 0 { 1 } else { -1 };
+            println!(
+                "info depth 1 score cp {} nodes 1234 nps 1234 time 1000 pv {}",
+                cp, best_move
+            );
+            println!("bestmove {}", best_move);
+            self.debug(&format!("Best move chosen: {}", best_move));
+        }
         //let iter = &mut parts.into_iter();
         //while let Some(param) = iter.next() {
         //    match param {
