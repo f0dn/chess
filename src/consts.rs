@@ -210,3 +210,40 @@ const fn king_moves() -> [u64; 64] {
 pub const SLIDING_MOVES: [[u64; 8]; 64] = sliding_moves();
 pub const KNIGHT_MOVES: [u64; 64] = knight_moves();
 pub const KING_MOVES: [u64; 64] = king_moves();
+
+pub const CASTLING_KING_FROM_SQUARE: [u16; 2] = [4, 60];
+pub const CASTLING_KING_TO_SQUARE: [[u16; 2]; 2] = [[2, 6], [58, 62]];
+const CASTLING_KING_FROM: [u64; 2] = [1 << 4, 1 << 60];
+const CASTLING_KING_TO: [[u64; 2]; 2] = [[1 << 2, 1 << 6], [1 << 58, 1 << 62]];
+const CASTLING_ROOK_FROM: [[u64; 2]; 2] = [[1 << 0, 1 << 7], [1 << 56, 1 << 63]];
+const CASTLING_ROOK_TO: [[u64; 2]; 2] = [[1 << 3, 1 << 5], [1 << 59, 1 << 61]];
+pub const CASTLING_ROOK_MASK: [[u64; 2]; 2] = [
+    [
+        CASTLING_ROOK_FROM[0][0] | CASTLING_ROOK_TO[0][0],
+        CASTLING_ROOK_FROM[0][1] | CASTLING_ROOK_TO[0][1],
+    ],
+    [
+        CASTLING_ROOK_FROM[1][0] | CASTLING_ROOK_TO[1][0],
+        CASTLING_ROOK_FROM[1][1] | CASTLING_ROOK_TO[1][1],
+    ],
+];
+pub const CASTLING_EMPTY: [[u64; 2]; 2] = [
+    [
+        CASTLING_KING_TO[0][0] | CASTLING_ROOK_TO[0][0],
+        CASTLING_KING_TO[0][1] | CASTLING_ROOK_TO[0][1],
+    ],
+    [
+        CASTLING_KING_TO[1][0] | CASTLING_ROOK_TO[1][0],
+        CASTLING_KING_TO[1][1] | CASTLING_ROOK_TO[1][1],
+    ],
+];
+pub const CASTLING_NON_ATTACKED: [[u64; 2]; 2] = [
+    [
+        CASTLING_KING_TO[0][0] | CASTLING_ROOK_TO[0][0] | CASTLING_KING_FROM[0],
+        CASTLING_KING_TO[0][1] | CASTLING_ROOK_TO[0][1] | CASTLING_KING_FROM[0],
+    ],
+    [
+        CASTLING_KING_TO[1][0] | CASTLING_ROOK_TO[1][0] | CASTLING_KING_FROM[1],
+        CASTLING_KING_TO[1][1] | CASTLING_ROOK_TO[1][1] | CASTLING_KING_FROM[1],
+    ],
+];

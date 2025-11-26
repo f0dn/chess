@@ -19,6 +19,7 @@ fn print_bitboard(bb: u64) {
 pub struct Board {
     bitboards: [u64; 12],
     turn: u8,
+    castling_rights: u8,
 }
 
 impl Board {
@@ -26,6 +27,7 @@ impl Board {
         let mut board = Board {
             bitboards: [0; 12],
             turn: 0,
+            castling_rights: 0,
         };
 
         let mut parts = fen.split_whitespace();
@@ -47,6 +49,23 @@ impl Board {
                     board.bitboards[bb_index] |= 1 << bit_index;
                     file += 1;
                 }
+            }
+        }
+
+        match parts.next() {
+            Some("w") => board.turn = 0,
+            Some("b") => board.turn = 1,
+            _ => panic!("Invalid FEN: missing turn information"),
+        }
+
+        for c in parts.next().unwrap_or("").chars() {
+            match c {
+                'K' => board.castling_rights |= KING_CASTLE as u8,
+                'Q' => board.castling_rights |= QUEEN_CASTLE as u8,
+                'k' => board.castling_rights |= (KING_CASTLE as u8) << 2,
+                'q' => board.castling_rights |= (QUEEN_CASTLE as u8) << 2,
+                '-' => {}
+                _ => panic!("Invalid FEN: invalid castling rights"),
             }
         }
 
@@ -115,8 +134,23 @@ impl Board {
         [self.bitboards[KING], self.bitboards[BLACK_KING]]
     }
 
+    fn major_pieces(&self) -> u64 {
+        self.add_bitboards(self.queens().as_ref()) | self.add_bitboards(self.rooks().as_ref())
+    }
+
+    fn minor_pieces(&self) -> u64 {
+        self.add_bitboards(self.bishops().as_ref()) | self.add_bitboards(self.knights().as_ref())
+    }
+
     fn is_checkmate(&self) -> bool {
         self.kings().iter().sum::<u64>() == 0
+    }
+
+    fn is_draw(&self) -> bool {
+        let num_major_pieces = self.major_pieces().count_ones();
+        let num_pawns = self.add_bitboards(self.pawns().as_ref()).count_ones();
+        let num_minor_pieces = self.minor_pieces().count_ones();
+        num_major_pieces == 0 && num_pawns == 0 && num_minor_pieces <= 1
     }
 
     fn color_boards(&self, color: u8) -> [u64; 6] {
@@ -133,7 +167,7 @@ impl Board {
         self.color_boards(1)
     }
 
-    fn add_bitboards(&self, boards: &[u64; 6]) -> u64 {
+    fn add_bitboards(&self, boards: &[u64]) -> u64 {
         boards.iter().fold(0, |acc, &bb| acc | bb)
     }
 
@@ -225,7 +259,99 @@ impl Board {
         moves
     }
 
-    pub fn pawn_moves(&self) -> Vec<Move> {
+    fn attacked_squares(&self, color: u8) -> u64 {
+        let mut attacks = 0;
+
+        let enemies = self.add_bitboards(&self.color_boards(color));
+        let friendly = self.add_bitboards(&self.color_boards(1 - color));
+
+        for (piece, dirs) in [
+            (BISHOP, vec![0, 2, 4, 6]),
+            (ROOK, vec![1, 3, 5, 7]),
+            (QUEEN, vec![0, 1, 2, 3, 4, 5, 6, 7]),
+        ] {
+            let mut piece_bb = self.bitboards[piece + (color as usize * 6)];
+            while piece_bb != 0 {
+                let from_square = piece_bb.trailing_zeros() as u16;
+                piece_bb &= piece_bb - 1;
+
+                for &dir in &dirs {
+                    let mut ray = SLIDING_MOVES[from_square as usize][dir];
+                    let mut unavaliable = 0;
+                    let blockers = ray & enemies;
+                    if blockers != 0 {
+                        let closest = if dir < 4 {
+                            blockers.trailing_zeros()
+                        } else {
+                            63 - blockers.leading_zeros()
+                        };
+
+                        let blocker_ray = SLIDING_MOVES[closest as usize][dir];
+                        unavaliable |= blocker_ray;
+                    }
+
+                    let blockers = ray & friendly;
+                    if blockers != 0 {
+                        let closest = if dir < 4 {
+                            blockers.trailing_zeros()
+                        } else {
+                            63 - blockers.leading_zeros()
+                        };
+
+                        let blocker_ray = SLIDING_MOVES[closest as usize][dir] | (1 << closest);
+                        unavaliable |= blocker_ray;
+                    }
+
+                    ray ^= unavaliable;
+
+                    attacks |= ray;
+                }
+            }
+        }
+
+        let dir = if color == 0 { 8 } else { -8 };
+
+        let mut piece_bb = self.bitboards[PAWN + (color as usize * 6)];
+        while piece_bb != 0 {
+            let from_square = piece_bb.trailing_zeros() as u16;
+            piece_bb &= piece_bb - 1;
+
+            for &attack_dir in &[-1, 1] {
+                if (from_square.is_multiple_of(8) && attack_dir == -1)
+                    || (from_square % 8 == 7 && attack_dir == 1)
+                {
+                    continue;
+                }
+                let to_square = (from_square as isize + dir + attack_dir) as u16;
+                if to_square < 64 && (enemies & (1 << to_square)) != 0 {
+                    attacks |= 1 << to_square;
+                }
+            }
+        }
+
+        for (piece, moves_array) in [(KNIGHT, &KNIGHT_MOVES), (KING, &KING_MOVES)] {
+            let mut bb = self.bitboards[piece + (color as usize * 6)];
+            while bb != 0 {
+                let from_square = bb.trailing_zeros() as u16;
+                bb &= bb - 1;
+
+                let possible_moves = moves_array[from_square as usize];
+
+                let mut non_friendly = possible_moves & !friendly;
+
+                while non_friendly != 0 {
+                    let to_square = non_friendly.trailing_zeros() as u16;
+                    non_friendly &= non_friendly - 1;
+
+                    attacks |= 1 << to_square;
+                }
+            }
+        }
+
+        attacks
+    }
+
+    fn pawn_moves(&self) -> Vec<Move> {
         let mut moves = Vec::new();
 
         let dir = if self.turn == 0 { 8 } else { -8 };
@@ -265,7 +391,7 @@ impl Board {
             }
 
             for &attack_dir in &[-1, 1] {
-                if (from_square % 8 == 0 && attack_dir == -1)
+                if (from_square.is_multiple_of(8) && attack_dir == -1)
                     || (from_square % 8 == 7 && attack_dir == 1)
                 {
                     continue;
@@ -364,6 +490,56 @@ impl Board {
         self.sliding_moves(&[1, 3, 5, 7], ROOK)
     }
 
+    fn castling_moves(&self) -> Vec<Move> {
+        let mut moves = Vec::new();
+
+        let rights = self.castling_rights >> (self.turn * 2);
+
+        let mut possible = false;
+
+        let occupied = self.add_bitboards(&self.bitboards);
+
+        for dir in [QUEEN_CASTLE, KING_CASTLE] {
+            if rights & dir as u8 == 0 {
+                continue;
+            }
+
+            if CASTLING_EMPTY[self.turn as usize][dir as usize - 1] & occupied != 0 {
+                continue;
+            }
+
+            possible = true;
+        }
+
+        if !possible {
+            return moves;
+        }
+
+        let attacked = self.attacked_squares(1 - self.turn);
+
+        for dir in [QUEEN_CASTLE, KING_CASTLE] {
+            if rights & dir as u8 == 0 {
+                continue;
+            }
+
+            if CASTLING_EMPTY[self.turn as usize][dir as usize - 1] & occupied != 0 {
+                continue;
+            }
+
+            if CASTLING_NON_ATTACKED[self.turn as usize][dir as usize - 1] & attacked != 0 {
+                continue;
+            }
+
+            let from_square = CASTLING_KING_FROM_SQUARE[self.turn as usize];
+            let to_square = CASTLING_KING_TO_SQUARE[self.turn as usize][dir as usize - 1];
+            let flags = dir;
+
+            moves.push(Move::new(from_square, to_square, flags));
+        }
+
+        moves
+    }
+
     fn queen_moves(&self) -> Vec<Move> {
         self.sliding_moves(&[0, 1, 2, 3, 4, 5, 6, 7], QUEEN)
     }
@@ -387,6 +563,11 @@ impl Board {
             self.bitboards[(flags & 0b11) as usize + self.turn as usize * 6] ^= to_mask;
         }
 
+        if flags == QUEEN_CASTLE || flags == KING_CASTLE {
+            self.bitboards[ROOK + self.turn as usize * 6] ^=
+                CASTLING_ROOK_MASK[self.turn as usize][flags as usize - 1];
+        }
+
         self.turn = 1 - self.turn;
     }
 
@@ -396,6 +577,18 @@ impl Board {
         mut beta: i32,
         depth: usize,
     ) -> (i32, Option<(Move, usize)>) {
+        if self.is_checkmate() {
+            return if self.turn == 0 {
+                (i32::MIN + 1, None)
+            } else {
+                (i32::MAX - 1, None)
+            };
+        }
+
+        if self.is_draw() {
+            return (0, None);
+        }
+
         if depth == 0 {
             return (self.evaluate(), None);
         }
@@ -411,6 +604,7 @@ impl Board {
             (ROOK, self.rook_moves()),
             (QUEEN, self.queen_moves()),
             (KING, self.king_moves()),
+            (KING, self.castling_moves()),
         ];
 
         for (piece, piece_moves) in moves {

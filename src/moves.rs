@@ -1,9 +1,9 @@
 use crate::consts::*;
 use std::fmt::Display;
 
-pub const DOUBLE_PAWN_PUSH: u16 = 0b0001;
+pub const DOUBLE_PAWN_PUSH: u16 = 0b0011;
 pub const KING_CASTLE: u16 = 0b0010;
-pub const QUEEN_CASTLE: u16 = 0b0011;
+pub const QUEEN_CASTLE: u16 = 0b0001;
 pub const EN_PASSANT: u16 = 0b0101;
 
 pub const PROMOTION: u16 = 0b1000;
