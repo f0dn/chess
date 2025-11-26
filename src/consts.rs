@@ -87,18 +87,18 @@ pub const OPTIMAL_SQUARES: [[i32; 64]; 6] = [
     KING_SQUARES,
 ];
 
-pub const PIECE_VALUES: [i32; 6] = [320, 330, 500, 900, 100, 20000];
+pub const PIECE_VALUES: [i32; 6] = [320, 330, 500, 900, 100, 2000000];
 
 const fn sliding_moves() -> [[u64; 8]; 64] {
-    let mut moves = [[0u64; 8]; 64];
+    let mut moves = [[0; 8]; 64];
 
-    let shifts: [(isize, isize); 8] = [
+    let shifts = [
         (-1, 1),  // NW
-        (0, 1),  // North
-        (1, 1), // NE
-        (1, 0), // East
-        (1, -1),// SE
-        (0, -1), // South
+        (0, 1),   // North
+        (1, 1),   // NE
+        (1, 0),   // East
+        (1, -1),  // SE
+        (0, -1),  // South
         (-1, -1), // SW
         (-1, 0),  // West
     ];
@@ -133,5 +133,80 @@ const fn sliding_moves() -> [[u64; 8]; 64] {
     moves
 }
 
+const fn knight_moves() -> [u64; 64] {
+    let mut moves = [0; 64];
+
+    let shifts = [
+        (1, -2),
+        (1, 2),
+        (-1, -2),
+        (-1, 2),
+        (2, -1),
+        (2, 1),
+        (-2, -1),
+        (-2, 1),
+    ];
+
+    let mut square = 0;
+    while square < 64 {
+        let mut idx = 0;
+        while idx < shifts.len() {
+            let (dx, dy) = shifts[idx];
+
+            let x = (square % 8) as isize + dx;
+            let y = (square / 8) as isize + dy;
+
+            if x >= 0 && x < 8 && y >= 0 && y < 8 {
+                let target_square = (y * 8 + x) as usize;
+                moves[square] |= 1 << target_square;
+            }
+
+            idx += 1;
+        }
+
+        square += 1;
+    }
+
+    moves
+}
+const fn king_moves() -> [u64; 64] {
+    let mut moves = [0; 64];
+
+    let shifts = [
+        (1, 0),
+        (0, 1),
+        (1, 1),
+        (-1, 0),
+        (-1, -1),
+        (0, -1),
+        (1, -1),
+        (-1, 1),
+    ];
+
+    let mut square = 0;
+    while square < 64 {
+        let mut idx = 0;
+        while idx < shifts.len() {
+            let (dx, dy) = shifts[idx];
+
+            let x = (square % 8) as isize + dx;
+            let y = (square / 8) as isize + dy;
+
+            if x >= 0 && x < 8 && y >= 0 && y < 8 {
+                let target_square = (y * 8 + x) as usize;
+                moves[square] |= 1 << target_square;
+            }
+
+            idx += 1;
+        }
+
+        square += 1;
+    }
+
+    moves
+}
+
 /// NW, North, NE, East, SE, South, SW, West
 pub const SLIDING_MOVES: [[u64; 8]; 64] = sliding_moves();
+pub const KNIGHT_MOVES: [u64; 64] = knight_moves();
+pub const KING_MOVES: [u64; 64] = king_moves();

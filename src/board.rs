@@ -15,6 +15,7 @@ fn print_bitboard(bb: u64) {
     println!();
 }
 
+#[derive(Clone)]
 pub struct Board {
     bitboards: [u64; 12],
     turn: u8,
@@ -68,6 +69,26 @@ impl Board {
             'k' => BLACK_KING,
             _ => panic!("Invalid piece character"),
         }
+    }
+
+    pub fn is_occupied(&self, square: u16) -> bool {
+        let mask = 1 << square;
+        for &bb in self.bitboards.iter() {
+            if (bb & mask) != 0 {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn get_piece_at(&self, square: u16) -> Option<usize> {
+        let mask = 1 << square;
+        for (i, &bb) in self.bitboards.iter().enumerate() {
+            if (bb & mask) != 0 {
+                return Some(i);
+            }
+        }
+        None
     }
 
     fn pawns(&self) -> [u64; 2] {
@@ -204,7 +225,7 @@ impl Board {
         moves
     }
 
-    fn pawn_moves(&self) -> Vec<Move> {
+    pub fn pawn_moves(&self) -> Vec<Move> {
         let mut moves = Vec::new();
 
         let dir = if self.turn == 0 { 8 } else { -8 };
@@ -271,15 +292,158 @@ impl Board {
         moves
     }
 
-    pub fn possible_moves(&self) -> Vec<Move> {
+    fn knight_moves(&self) -> Vec<Move> {
         let mut moves = Vec::new();
 
-        moves.extend(self.pawn_moves());
-        moves.extend(self.sliding_moves(&[0, 2, 4, 6], BISHOP));
-        moves.extend(self.sliding_moves(&[1, 3, 5, 7], ROOK));
-        moves.extend(self.sliding_moves(&[0, 1, 2, 3, 4, 5, 6, 7], QUEEN));
+        let enemies = self.opp_squares();
+        let friendly = self.friendly_squares();
+
+        let mut knight_bb = self.bitboards[KNIGHT + (self.turn as usize * 6)];
+        while knight_bb != 0 {
+            let from_square = knight_bb.trailing_zeros() as u16;
+            knight_bb &= knight_bb - 1;
+
+            let possible_moves = KNIGHT_MOVES[from_square as usize];
+
+            let mut non_friendly = possible_moves & !friendly;
+
+            while non_friendly != 0 {
+                let to_square = non_friendly.trailing_zeros() as u16;
+                non_friendly &= non_friendly - 1;
+
+                let flags = if enemies & (1 << to_square) != 0 {
+                    CAPTURE
+                } else {
+                    0
+                };
+
+                moves.push(Move::new(from_square, to_square, flags));
+            }
+        }
 
         moves
+    }
+
+    fn king_moves(&self) -> Vec<Move> {
+        let mut moves = Vec::new();
+
+        let enemies = self.opp_squares();
+        let friendly = self.friendly_squares();
+
+        let mut king_bb = self.bitboards[KING + (self.turn as usize * 6)];
+        while king_bb != 0 {
+            let from_square = king_bb.trailing_zeros() as u16;
+            king_bb &= king_bb - 1;
+
+            let possible_moves = KING_MOVES[from_square as usize];
+
+            let mut non_friendly = possible_moves & !friendly;
+
+            while non_friendly != 0 {
+                let to_square = non_friendly.trailing_zeros() as u16;
+                non_friendly &= non_friendly - 1;
+
+                let flags = if enemies & (1 << to_square) != 0 {
+                    CAPTURE
+                } else {
+                    0
+                };
+
+                moves.push(Move::new(from_square, to_square, flags));
+            }
+        }
+
+        moves
+    }
+
+    fn bishop_moves(&self) -> Vec<Move> {
+        self.sliding_moves(&[0, 2, 4, 6], BISHOP)
+    }
+
+    fn rook_moves(&self) -> Vec<Move> {
+        self.sliding_moves(&[1, 3, 5, 7], ROOK)
+    }
+
+    fn queen_moves(&self) -> Vec<Move> {
+        self.sliding_moves(&[0, 1, 2, 3, 4, 5, 6, 7], QUEEN)
+    }
+
+    pub fn make_move(&mut self, m: Move, piece: usize) {
+        let flags = m.flags();
+        let from_mask = 1 << m.from();
+        let to_mask = 1 << m.to();
+        let opp_to_mask = !to_mask;
+
+        self.bitboards[piece + 6 * self.turn as usize] ^= from_mask | to_mask;
+
+        if flags & CAPTURE != 0 {
+            for i in (6 * (1 - self.turn))..(6 * ((1 - self.turn) + 1)) {
+                self.bitboards[i as usize] &= opp_to_mask;
+            }
+        }
+
+        if flags & PROMOTION != 0 {
+            self.bitboards[PAWN + self.turn as usize * 6] ^= to_mask;
+            self.bitboards[(flags & 0b11) as usize + self.turn as usize * 6] ^= to_mask;
+        }
+
+        self.turn = 1 - self.turn;
+    }
+
+    pub fn alphabeta(
+        &self,
+        mut alpha: i32,
+        mut beta: i32,
+        depth: usize,
+    ) -> (i32, Option<(Move, usize)>) {
+        if depth == 0 {
+            return (self.evaluate(), None);
+        }
+
+        let mut best_score = if self.turn == 0 { i32::MIN } else { i32::MAX };
+
+        let mut best_move = None;
+
+        let moves = vec![
+            (PAWN, self.pawn_moves()),
+            (KNIGHT, self.knight_moves()),
+            (BISHOP, self.bishop_moves()),
+            (ROOK, self.rook_moves()),
+            (QUEEN, self.queen_moves()),
+            (KING, self.king_moves()),
+        ];
+
+        for (piece, piece_moves) in moves {
+            for m in piece_moves {
+                let mut new_board = self.clone();
+                new_board.make_move(m, piece);
+                let score = new_board.alphabeta(alpha, beta, depth - 1);
+
+                if self.turn == 0 {
+                    if score.0 > best_score {
+                        best_score = score.0;
+                        best_move = Some((m, piece));
+                    }
+                    if best_score >= beta {
+                        break;
+                    }
+                    alpha = alpha.max(best_score);
+                } else if score.0 < best_score {
+                    best_score = score.0;
+                    best_move = Some((m, piece));
+                    if best_score <= alpha {
+                        break;
+                    }
+                    beta = beta.min(best_score);
+                }
+            }
+        }
+
+        (best_score, best_move)
+    }
+
+    pub fn minimax(&self, depth: usize) -> (i32, Option<(Move, usize)>) {
+        self.alphabeta(i32::MIN, i32::MAX, depth)
     }
 }
 
