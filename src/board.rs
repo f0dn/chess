@@ -1,6 +1,8 @@
 use std::fmt::Display;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use crate::consts::*;
 use crate::moves::*;
@@ -165,14 +167,6 @@ impl Board {
             .unwrap()
     }
 
-    fn white_boards(&self) -> [u64; 6] {
-        self.color_boards(0)
-    }
-
-    fn black_boards(&self) -> [u64; 6] {
-        self.color_boards(1)
-    }
-
     fn add_bitboards(&self, boards: &[u64]) -> u64 {
         boards.iter().fold(0, |acc, &bb| acc | bb)
     }
@@ -183,6 +177,16 @@ impl Board {
 
     fn friendly_squares(&self) -> u64 {
         self.add_bitboards(&self.color_boards(self.turn))
+    }
+
+    fn piece_on_square(&self, square: u16) -> Option<usize> {
+        let mask = 1 << square;
+        for (i, &bb) in self.bitboards.iter().enumerate() {
+            if (bb & mask) != 0 {
+                return Some(i);
+            }
+        }
+        None
     }
 
     fn evaluate(&self) -> i32 {
@@ -207,9 +211,7 @@ impl Board {
         score
     }
 
-    fn sliding_moves(&self, dirs: &[usize], piece: usize) -> Vec<Move> {
-        let mut moves = Vec::new();
-
+    fn sliding_moves(&self, dirs: &[usize], piece: usize, moves: &mut Vec<(usize, Move, usize)>) {
         let enemies = self.opp_squares();
         let friendly = self.friendly_squares();
 
@@ -251,18 +253,21 @@ impl Board {
                     let to_square = ray.trailing_zeros() as u16;
                     ray &= ray - 1;
 
-                    let flags = if (enemies & (1 << to_square)) != 0 {
-                        CAPTURE
+                    let (flags, value) = if (enemies & (1 << to_square)) != 0 {
+                        (
+                            CAPTURE,
+                            10 * PIECE_VALUES[self.piece_on_square(to_square).unwrap() % 6]
+                                as usize
+                                - PIECE_VALUES[piece] as usize,
+                        )
                     } else {
-                        0
+                        (0, 0)
                     };
 
-                    moves.push(Move::new(from_square, to_square, flags));
+                    moves.push((piece, Move::new(from_square, to_square, flags), value));
                 }
             }
         }
-
-        moves
     }
 
     pub fn attacked_squares(&self, color: u8) -> u64 {
@@ -357,9 +362,7 @@ impl Board {
         attacks
     }
 
-    fn pawn_moves(&self) -> Vec<Move> {
-        let mut moves = Vec::new();
-
+    fn pawn_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
         let dir = if self.turn == 0 { 8 } else { -8 };
 
         let enemies = self.opp_squares();
@@ -376,14 +379,14 @@ impl Board {
                 if rank == 0 || rank == 7 {
                     let promotion_pieces = [QUEEN, ROOK, BISHOP, KNIGHT];
                     for &promo_piece in &promotion_pieces {
-                        moves.push(Move::new(
-                            from_square,
-                            to_square,
-                            PROMOTION | promo_piece as u16,
+                        moves.push((
+                            PAWN,
+                            Move::new(from_square, to_square, PROMOTION | promo_piece as u16),
+                            PIECE_VALUES[promo_piece] as usize,
                         ));
                     }
                 } else {
-                    moves.push(Move::new(from_square, to_square, 0));
+                    moves.push((PAWN, Move::new(from_square, to_square, 0), 0));
                 };
 
                 if (from_square / 8 == 1 && self.turn == 0)
@@ -391,7 +394,11 @@ impl Board {
                 {
                     let to_square_2 = (from_square as isize + 2 * dir) as u16;
                     if to_square < 64 && (1 << to_square_2) & (enemies | friendly) == 0 {
-                        moves.push(Move::new(from_square, to_square_2, DOUBLE_PAWN_PUSH));
+                        moves.push((
+                            PAWN,
+                            Move::new(from_square, to_square_2, DOUBLE_PAWN_PUSH),
+                            0,
+                        ));
                     }
                 }
             }
@@ -405,28 +412,36 @@ impl Board {
                 let to_square = (from_square as isize + dir + attack_dir) as u16;
                 if to_square < 64 && (enemies & (1 << to_square)) != 0 {
                     let rank = to_square / 8;
+                    let captured_piece = self.piece_on_square(to_square).unwrap() % 6;
                     if rank == 0 || rank == 7 {
                         let promotion_pieces = [QUEEN, ROOK, BISHOP, KNIGHT];
                         for &promo_piece in &promotion_pieces {
-                            moves.push(Move::new(
-                                from_square,
-                                to_square,
-                                PROMOTION | CAPTURE | promo_piece as u16,
+                            moves.push((
+                                PAWN,
+                                Move::new(
+                                    from_square,
+                                    to_square,
+                                    PROMOTION | CAPTURE | promo_piece as u16,
+                                ),
+                                PIECE_VALUES[promo_piece] as usize
+                                    + 10 * PIECE_VALUES[captured_piece] as usize
+                                    - PIECE_VALUES[PAWN] as usize,
                             ));
                         }
                     } else {
-                        moves.push(Move::new(from_square, to_square, CAPTURE));
+                        moves.push((
+                            PAWN,
+                            Move::new(from_square, to_square, CAPTURE),
+                            10 * PIECE_VALUES[captured_piece] as usize
+                                - PIECE_VALUES[PAWN] as usize,
+                        ));
                     };
                 }
             }
         }
-
-        moves
     }
 
-    fn knight_moves(&self) -> Vec<Move> {
-        let mut moves = Vec::new();
-
+    fn knight_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
         let enemies = self.opp_squares();
         let friendly = self.friendly_squares();
 
@@ -443,22 +458,22 @@ impl Board {
                 let to_square = non_friendly.trailing_zeros() as u16;
                 non_friendly &= non_friendly - 1;
 
-                let flags = if enemies & (1 << to_square) != 0 {
-                    CAPTURE
+                let (flags, value) = if enemies & (1 << to_square) != 0 {
+                    (
+                        CAPTURE,
+                        10 * PIECE_VALUES[self.piece_on_square(to_square).unwrap() % 6] as usize
+                            - PIECE_VALUES[KNIGHT] as usize,
+                    )
                 } else {
-                    0
+                    (0, 0)
                 };
 
-                moves.push(Move::new(from_square, to_square, flags));
+                moves.push((KNIGHT, Move::new(from_square, to_square, flags), value));
             }
         }
-
-        moves
     }
 
-    fn king_moves(&self) -> Vec<Move> {
-        let mut moves = Vec::new();
-
+    fn king_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
         let enemies = self.opp_squares();
         let friendly = self.friendly_squares();
 
@@ -475,30 +490,30 @@ impl Board {
                 let to_square = non_friendly.trailing_zeros() as u16;
                 non_friendly &= non_friendly - 1;
 
-                let flags = if enemies & (1 << to_square) != 0 {
-                    CAPTURE
+                let (flags, value) = if enemies & (1 << to_square) != 0 {
+                    (
+                        CAPTURE,
+                        10 * PIECE_VALUES[self.piece_on_square(to_square).unwrap() % 6] as usize
+                            - PIECE_VALUES[KING] as usize,
+                    )
                 } else {
-                    0
+                    (0, 0)
                 };
 
-                moves.push(Move::new(from_square, to_square, flags));
+                moves.push((KING, Move::new(from_square, to_square, flags), value));
             }
         }
-
-        moves
     }
 
-    fn bishop_moves(&self) -> Vec<Move> {
-        self.sliding_moves(&[0, 2, 4, 6], BISHOP)
+    fn bishop_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
+        self.sliding_moves(&[0, 2, 4, 6], BISHOP, moves);
     }
 
-    fn rook_moves(&self) -> Vec<Move> {
-        self.sliding_moves(&[1, 3, 5, 7], ROOK)
+    fn rook_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
+        self.sliding_moves(&[1, 3, 5, 7], ROOK, moves)
     }
 
-    fn castling_moves(&self) -> Vec<Move> {
-        let mut moves = Vec::new();
-
+    fn castling_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
         let rights = self.castling_rights >> (self.turn * 2);
 
         let mut possible = false;
@@ -518,7 +533,7 @@ impl Board {
         }
 
         if !possible {
-            return moves;
+            return;
         }
 
         let attacked = self.attacked_squares(1 - self.turn);
@@ -540,14 +555,12 @@ impl Board {
             let to_square = CASTLING_KING_TO_SQUARE[self.turn as usize][dir as usize - 1];
             let flags = dir;
 
-            moves.push(Move::new(from_square, to_square, flags));
+            moves.push((KING, Move::new(from_square, to_square, flags), 100));
         }
-
-        moves
     }
 
-    fn queen_moves(&self) -> Vec<Move> {
-        self.sliding_moves(&[0, 1, 2, 3, 4, 5, 6, 7], QUEEN)
+    fn queen_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
+        self.sliding_moves(&[0, 1, 2, 3, 4, 5, 6, 7], QUEEN, moves)
     }
 
     pub fn make_move(&mut self, m: Move, piece: usize) {
@@ -575,6 +588,12 @@ impl Board {
             for i in (6 * (1 - self.turn))..(6 * ((1 - self.turn) + 1)) {
                 self.bitboards[i as usize] &= opp_to_mask;
             }
+
+            for dir in [KING_CASTLE, QUEEN_CASTLE] {
+                if m.to() == CASTLING_ROOK_FROM_SQUARE[1 - self.turn as usize][dir as usize - 1] {
+                    self.castling_rights &= !((dir as u8) << (self.turn * 2));
+                }
+            }
         }
 
         if flags & PROMOTION != 0 {
@@ -590,88 +609,100 @@ impl Board {
         self.turn = 1 - self.turn;
     }
 
-    pub fn alphabeta(
+    fn alphabeta(
         &self,
         mut alpha: i32,
         mut beta: i32,
         depth: usize,
-    ) -> (i32, Option<(Move, usize)>) {
-        //self.debug(&format!("Evaluating\n{}", self));
+        cancel: Arc<AtomicBool>,
+        is_capture_search: bool,
+    ) -> (i32, usize, Vec<Move>) {
+        {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return (0, 0, Vec::new());
+            }
+        }
+
         if self.is_checkmate_self() {
             return if self.turn == 0 {
-                (i32::MIN + 1, None)
-                //(i32::MIN + (MAX_DEPTH - depth) as i32, None)
+                (i32::MIN + (MAX_DEPTH - depth) as i32, 1, Vec::new())
             } else {
-                (i32::MAX - 1, None)
-                //(i32::MAX - (MAX_DEPTH - depth) as i32, None)
+                (i32::MAX - (MAX_DEPTH - depth) as i32, 1, Vec::new())
             };
         }
 
         if self.is_checkmate_opp() {
             return if self.turn == 0 {
-                (i32::MAX - 1, None)
-                //(i32::MAX - (MAX_DEPTH - depth) as i32, None)
+                (i32::MAX - (MAX_DEPTH - depth) as i32, 1, Vec::new())
             } else {
-                (i32::MIN + 1, None)
-                //(i32::MIN + (MAX_DEPTH - depth) as i32, None)
+                (i32::MIN + (MAX_DEPTH - depth) as i32, 1, Vec::new())
             };
         }
 
         if self.is_draw() {
-            return (0, None);
+            return (0, 1, Vec::new());
         }
 
-        if depth == 0 {
-            return (self.evaluate(), None);
+        if depth == 0 && !is_capture_search {
+            return self.alphabeta(alpha, beta, 0, cancel, true);
         }
 
         let mut best_score = if self.turn == 0 { i32::MIN } else { i32::MAX };
+        if is_capture_search {
+            best_score = self.evaluate();
+        }
 
-        let mut best_move = None;
+        let mut best_line = Vec::new();
+        let mut nodes = 0;
 
-        let moves = vec![
-            (PAWN, self.pawn_moves()),
-            (KNIGHT, self.knight_moves()),
-            (BISHOP, self.bishop_moves()),
-            (ROOK, self.rook_moves()),
-            (QUEEN, self.queen_moves()),
-            (KING, self.king_moves()),
-            (KING, self.castling_moves()),
-        ];
+        let mut moves = Vec::new();
+        self.pawn_moves(&mut moves);
+        self.knight_moves(&mut moves);
+        self.bishop_moves(&mut moves);
+        self.rook_moves(&mut moves);
+        self.queen_moves(&mut moves);
+        self.king_moves(&mut moves);
+        self.castling_moves(&mut moves);
 
-        for (piece, piece_moves) in moves {
-            for m in piece_moves {
-                let mut new_board = self.clone();
-                //self.debug(&format!("Making move: {}", m));
-                new_board.make_move(m, piece);
-                let score = new_board.alphabeta(alpha, beta, depth - 1);
+        moves.sort_by(|a, b| b.2.cmp(&a.2));
 
-                if self.turn == 0 {
-                    if score.0 > best_score {
-                        best_score = score.0;
-                        best_move = Some((m, piece));
-                    }
-                    if best_score >= beta {
-                        break;
-                    }
-                    alpha = alpha.max(best_score);
-                } else if score.0 < best_score {
+        for (piece, m, _) in moves {
+            if is_capture_search && m.flags() & CAPTURE == 0 {
+                continue;
+            }
+
+            let mut new_board = self.clone();
+            //self.debug(&format!("Making move: {}", m));
+            new_board.make_move(m, piece);
+            let mut score = new_board.alphabeta(alpha, beta, depth - 1, cancel.clone(), is_capture_search);
+            score.2.push(m);
+            nodes += score.1;
+
+            if self.turn == 0 {
+                if score.0 > best_score {
                     best_score = score.0;
-                    best_move = Some((m, piece));
-                    if best_score <= alpha {
-                        break;
-                    }
-                    beta = beta.min(best_score);
+                    best_line = score.2;
                 }
+                if best_score >= beta {
+                    break;
+                }
+                alpha = alpha.max(best_score);
+            } else if score.0 < best_score {
+                best_score = score.0;
+                best_line = score.2;
+                if best_score <= alpha {
+                    break;
+                }
+                beta = beta.min(best_score);
             }
         }
 
         //self.debug(&format!("returning score: {}", best_score));
-        (best_score, best_move)
+        (best_score, nodes, best_line)
     }
 
-    pub fn minimax(&self, depth: usize) -> (i32, Option<(Move, usize)>) {
-        let res = self.alphabeta(i32::MIN, i32::MAX, depth);
+    pub fn minimax(&self, depth: usize, cancel: Arc<AtomicBool>) -> (i32, usize, Vec<Move>) {
+        let res = self.alphabeta(i32::MIN, i32::MAX, depth, cancel, false);
         self.debug(&format!("Minimax result: {}", res.0));
         res
     }
