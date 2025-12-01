@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use std::str::SplitWhitespace;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::thread::spawn;
+use std::time::Duration;
 use std::time::Instant;
 
 use crate::board::Board;
@@ -206,7 +208,7 @@ impl Engine {
                     mv.append_flags(CAPTURE);
                 }
 
-                board.make_move(mv, piece % 6);
+                board.make_move(&mv, piece % 6);
             }
         }
         Engine::debug(&format!("Castling rights: {}", board.castling_rights));
@@ -219,6 +221,7 @@ impl Engine {
         let thread_cancel = self.cancel.clone();
         let options = GoOptions::parse(parts);
         spawn(move || {
+            let mut evals = HashMap::new();
             let board = thread_board.lock().unwrap();
             let time_start = Instant::now();
             let time_limit = if options.infinite {
@@ -229,11 +232,11 @@ impl Engine {
                 options.wtime.unwrap_or(1000) + options.winc.unwrap_or(0)
             };
             let time_allowed = (time_limit / 50).max(2000);
-            let end_time = time_start + std::time::Duration::from_millis(time_allowed as u64);
+            let end_time = time_start + Duration::from_millis(time_allowed as u64);
             let time_thread_cancel = thread_cancel.clone();
             spawn(move || {
                 while Instant::now() < end_time && !time_thread_cancel.load(Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    std::thread::sleep(Duration::from_millis(10));
                 }
                 time_thread_cancel.store(true, Ordering::Relaxed);
             });
@@ -241,15 +244,16 @@ impl Engine {
             let mut best_move = Move::new(0, 0, 0);
             loop {
                 let start = Instant::now();
-                let (eval, nodes, best_line) = board.minimax(depth, thread_cancel.clone());
+                let (eval, nodes, best_line) =
+                    board.minimax(depth, thread_cancel.clone(), &mut evals);
                 let duration = Instant::now() - start;
                 if thread_cancel.load(Ordering::Relaxed) {
                     break;
                 }
                 best_move = best_line[best_line.len() - 1];
-                let cp = eval * if board.turn == 0 { 1 } else { -1 };
+                let cp = if board.turn == 0 { eval } else { -eval };
                 println!(
-                    "info depth {} nodes {} nps {} time {} score cp {} pv {}",
+                    "info depth {} nodes {} nps {} time {} score {} pv {}",
                     depth,
                     nodes,
                     nodes as u128 * 1000 / duration.as_millis().max(1),

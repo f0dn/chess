@@ -1,10 +1,13 @@
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::fs::OpenOptions;
+use std::hash::Hash;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::consts::*;
+use crate::eval::*;
 use crate::moves::*;
 
 pub fn print_bitboard(bb: u64) {
@@ -19,7 +22,7 @@ pub fn print_bitboard(bb: u64) {
     println!();
 }
 
-#[derive(Clone)]
+#[derive(Clone, Hash, PartialEq, Eq)] // TODO zobrist hashing
 pub struct Board {
     bitboards: [u64; 12],
     pub turn: u8,
@@ -189,7 +192,7 @@ impl Board {
         None
     }
 
-    fn evaluate(&self) -> i32 {
+    fn evaluate(&self) -> Eval {
         let mut score = 0;
 
         for piece_type in 0..6 {
@@ -208,7 +211,7 @@ impl Board {
             }
         }
 
-        score
+        Eval::new(score)
     }
 
     fn sliding_moves(&self, dirs: &[usize], piece: usize, moves: &mut Vec<(usize, Move, usize)>) {
@@ -563,7 +566,7 @@ impl Board {
         self.sliding_moves(&[0, 1, 2, 3, 4, 5, 6, 7], QUEEN, moves)
     }
 
-    pub fn make_move(&mut self, m: Move, piece: usize) {
+    pub fn make_move(&mut self, m: &Move, piece: usize) {
         let flags = m.flags();
         let from_mask = 1 << m.from();
         let to_mask = 1 << m.to();
@@ -611,43 +614,73 @@ impl Board {
 
     fn alphabeta(
         &self,
-        mut alpha: i32,
-        mut beta: i32,
+        mut alpha: Eval,
+        mut beta: Eval,
         depth: usize,
+        start_depth: usize,
         cancel: Arc<AtomicBool>,
         is_capture_search: bool,
-    ) -> (i32, usize, Vec<Move>) {
+        memo: &mut HashMap<Board, (usize, Eval, Vec<Move>, Vec<(usize, Move, usize)>)>,
+    ) -> (Eval, usize, Vec<Move>) {
         {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                return (0, 0, Vec::new());
+                return (DRAW_EVAL, 0, Vec::new());
+            }
+        }
+
+        let mut moves = Vec::new();
+        if let Some(&(stored_depth, stored_score, ref stored_line, ref stored_moves)) =
+            memo.get(self)
+        {
+            if stored_depth >= depth {
+                return (stored_score, 1, stored_line.clone());
+            } else {
+                moves = stored_moves.clone();
             }
         }
 
         if self.is_checkmate_self() {
             return if self.turn == 0 {
-                (i32::MIN + (MAX_DEPTH - depth) as i32, 1, Vec::new())
+                (
+                    Eval::mate_in(start_depth as i32 - depth as i32 - 1),
+                    1,
+                    Vec::new(),
+                )
             } else {
-                (i32::MAX - (MAX_DEPTH - depth) as i32, 1, Vec::new())
+                (
+                    -Eval::mate_in(start_depth as i32 - depth as i32 - 1),
+                    1,
+                    Vec::new(),
+                )
             };
         }
 
         if self.is_checkmate_opp() {
             return if self.turn == 0 {
-                (i32::MAX - (MAX_DEPTH - depth) as i32, 1, Vec::new())
+                (
+                    -Eval::mate_in(start_depth as i32 - depth as i32 - 1),
+                    1,
+                    Vec::new(),
+                )
             } else {
-                (i32::MIN + (MAX_DEPTH - depth) as i32, 1, Vec::new())
+                (
+                    Eval::mate_in(start_depth as i32 - depth as i32 - 1),
+                    1,
+                    Vec::new(),
+                )
             };
         }
 
         if self.is_draw() {
-            return (0, 1, Vec::new());
+            return (DRAW_EVAL, 1, Vec::new());
         }
 
         if depth == 0 && !is_capture_search {
-            return self.alphabeta(alpha, beta, 0, cancel, true);
+            let large_depth = 10000;
+            return self.alphabeta(alpha, beta, large_depth, large_depth, cancel, true, memo);
         }
 
-        let mut best_score = if self.turn == 0 { i32::MIN } else { i32::MAX };
+        let mut best_score = if self.turn == 0 { MIN_EVAL } else { MAX_EVAL };
         if is_capture_search {
             best_score = self.evaluate();
         }
@@ -655,7 +688,6 @@ impl Board {
         let mut best_line = Vec::new();
         let mut nodes = 0;
 
-        let mut moves = Vec::new();
         self.pawn_moves(&mut moves);
         self.knight_moves(&mut moves);
         self.bishop_moves(&mut moves);
@@ -666,16 +698,24 @@ impl Board {
 
         moves.sort_by(|a, b| b.2.cmp(&a.2));
 
-        for (piece, m, _) in moves {
+        for (piece, m, _) in &moves {
             if is_capture_search && m.flags() & CAPTURE == 0 {
                 continue;
             }
 
             let mut new_board = self.clone();
             //self.debug(&format!("Making move: {}", m));
-            new_board.make_move(m, piece);
-            let mut score = new_board.alphabeta(alpha, beta, depth - 1, cancel.clone(), is_capture_search);
-            score.2.push(m);
+            new_board.make_move(m, *piece);
+            let mut score = new_board.alphabeta(
+                alpha,
+                beta,
+                depth - 1,
+                start_depth,
+                cancel.clone(),
+                is_capture_search,
+                memo,
+            );
+            score.2.push(*m);
             nodes += score.1;
 
             if self.turn == 0 {
@@ -697,12 +737,20 @@ impl Board {
             }
         }
 
+        if !is_capture_search {
+            memo.insert(self.clone(), (depth, best_score, best_line.clone(), moves));
+        }
         //self.debug(&format!("returning score: {}", best_score));
         (best_score, nodes, best_line)
     }
 
-    pub fn minimax(&self, depth: usize, cancel: Arc<AtomicBool>) -> (i32, usize, Vec<Move>) {
-        let res = self.alphabeta(i32::MIN, i32::MAX, depth, cancel, false);
+    pub fn minimax(
+        &self,
+        depth: usize,
+        cancel: Arc<AtomicBool>,
+        memo: &mut HashMap<Board, (usize, Eval, Vec<Move>, Vec<(usize, Move, usize)>)>,
+    ) -> (Eval, usize, Vec<Move>) {
+        let res = self.alphabeta(MIN_EVAL, MAX_EVAL, depth, depth, cancel, false, memo);
         self.debug(&format!("Minimax result: {}", res.0));
         res
     }

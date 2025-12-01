@@ -1,5 +1,3 @@
-pub const MAX_DEPTH: usize = 4000;
-
 pub const KNIGHT: usize = 0;
 pub const BISHOP: usize = 1;
 pub const ROOK: usize = 2;
