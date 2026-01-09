@@ -494,11 +494,7 @@ impl Board {
                 non_friendly &= non_friendly - 1;
 
                 let (flags, value) = if enemies & (1 << to_square) != 0 {
-                    (
-                        CAPTURE,
-                        10 * PIECE_VALUES[self.piece_on_square(to_square).unwrap() % 6] as usize
-                            - PIECE_VALUES[KING] as usize,
-                    )
+                    (CAPTURE, 0)
                 } else {
                     (0, 0)
                 };
@@ -594,7 +590,7 @@ impl Board {
 
             for dir in [KING_CASTLE, QUEEN_CASTLE] {
                 if m.to() == CASTLING_ROOK_FROM_SQUARE[1 - self.turn as usize][dir as usize - 1] {
-                    self.castling_rights &= !((dir as u8) << (self.turn * 2));
+                    self.castling_rights &= !((dir as u8) << ((1 - self.turn) * 2));
                 }
             }
         }
@@ -756,7 +752,7 @@ impl Board {
     }
 
     fn debug(&self, msg: &str) {
-        let debug_file = "/Users/there/Documents/ChessEngine/debug.txt";
+        let debug_file = "debug.txt";
 
         let mut file = OpenOptions::new()
             .create(true)

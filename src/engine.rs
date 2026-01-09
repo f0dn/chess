@@ -134,7 +134,7 @@ impl Engine {
     }
 
     fn debug(msg: &str) {
-        let debug_file = "/Users/there/Documents/ChessEngine/debug.txt";
+        let debug_file = "debug.txt";
 
         let mut file = OpenOptions::new()
             .create(true)
