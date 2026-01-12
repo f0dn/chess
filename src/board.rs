@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicBool;
 use crate::consts::*;
 use crate::eval::*;
 use crate::moves::*;
+use crate::zobrist::*;
 
 pub fn print_bitboard(bb: u64) {
     for rank in (0..8).rev() {
@@ -22,11 +23,31 @@ pub fn print_bitboard(bb: u64) {
     println!();
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)] // TODO zobrist hashing
+#[derive(Clone, PartialEq, Eq)]
 pub struct Board {
     bitboards: [u64; 12],
     pub turn: u8,
     pub castling_rights: u8,
+}
+
+impl Hash for Board {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // TODO include en passant
+        let mut hash: u64 = 0;
+        for square in 0..64 {
+            let mask = 1 << square;
+            for (i, &bb) in self.bitboards.iter().enumerate() {
+                if (bb & mask) != 0 {
+                    hash ^= ZOBRIST_TABLE[square as usize][i];
+                }
+            }
+        }
+        if self.turn == 1 {
+            hash ^= ZOBRIST_BLACK_TO_MOVE;
+        }
+        hash ^= ZOBRIST_CASTLING_RIGHTS[self.castling_rights as usize];
+        state.write_u64(hash);
+    }
 }
 
 impl Board {
@@ -214,7 +235,13 @@ impl Board {
         Eval::new(score)
     }
 
-    fn sliding_moves(&self, dirs: &[usize], piece: usize, moves: &mut Vec<(usize, Move, usize)>) {
+    fn sliding_moves(
+        &self,
+        dirs: &[usize],
+        piece: usize,
+        moves: &mut Vec<(usize, Move, usize)>,
+        only_captures: bool,
+    ) {
         let enemies = self.opp_squares();
         let friendly = self.friendly_squares();
 
@@ -233,6 +260,19 @@ impl Board {
                     } else {
                         63 - blockers.leading_zeros()
                     };
+
+                    if only_captures && (1 << closest) & friendly == 0 {
+                        // do nothing
+                    } else if only_captures {
+                        moves.push((
+                            piece,
+                            Move::new(from_square, closest as u16, CAPTURE),
+                            10 * PIECE_VALUES[self.piece_on_square(closest as u16).unwrap() % 6]
+                                as usize
+                                - PIECE_VALUES[piece] as usize,
+                        ));
+                        continue;
+                    }
 
                     let blocker_ray = SLIDING_MOVES[closest as usize][dir];
                     unavaliable |= blocker_ray;
@@ -365,7 +405,7 @@ impl Board {
         attacks
     }
 
-    fn pawn_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
+    fn add_pawn_moves(&self, moves: &mut Vec<(usize, Move, usize)>, only_captures: bool) {
         let dir = if self.turn == 0 { 8 } else { -8 };
 
         let enemies = self.opp_squares();
@@ -377,7 +417,7 @@ impl Board {
             piece_bb &= piece_bb - 1;
 
             let to_square = (from_square as isize + dir) as u16;
-            if to_square < 64 && (1 << to_square) & (enemies | friendly) == 0 {
+            if !only_captures && to_square < 64 && (1 << to_square) & (enemies | friendly) == 0 {
                 let rank = to_square / 8;
                 if rank == 0 || rank == 7 {
                     let promotion_pieces = [QUEEN, ROOK, BISHOP, KNIGHT];
@@ -444,7 +484,7 @@ impl Board {
         }
     }
 
-    fn knight_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
+    fn add_knight_moves(&self, moves: &mut Vec<(usize, Move, usize)>, only_captures: bool) {
         let enemies = self.opp_squares();
         let friendly = self.friendly_squares();
 
@@ -471,12 +511,16 @@ impl Board {
                     (0, 0)
                 };
 
+                if only_captures && flags == 0 {
+                    continue;
+                }
+
                 moves.push((KNIGHT, Move::new(from_square, to_square, flags), value));
             }
         }
     }
 
-    fn king_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
+    fn add_king_moves(&self, moves: &mut Vec<(usize, Move, usize)>, only_captures: bool) {
         let enemies = self.opp_squares();
         let friendly = self.friendly_squares();
 
@@ -499,20 +543,24 @@ impl Board {
                     (0, 0)
                 };
 
+                if only_captures && flags == 0 {
+                    continue;
+                }
+
                 moves.push((KING, Move::new(from_square, to_square, flags), value));
             }
         }
     }
 
-    fn bishop_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
-        self.sliding_moves(&[0, 2, 4, 6], BISHOP, moves);
+    fn add_bishop_moves(&self, moves: &mut Vec<(usize, Move, usize)>, only_captures: bool) {
+        self.sliding_moves(&[0, 2, 4, 6], BISHOP, moves, only_captures)
     }
 
-    fn rook_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
-        self.sliding_moves(&[1, 3, 5, 7], ROOK, moves)
+    fn add_rook_moves(&self, moves: &mut Vec<(usize, Move, usize)>, only_captures: bool) {
+        self.sliding_moves(&[1, 3, 5, 7], ROOK, moves, only_captures)
     }
 
-    fn castling_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
+    fn add_castling_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
         let rights = self.castling_rights >> (self.turn * 2);
 
         let mut possible = false;
@@ -558,8 +606,18 @@ impl Board {
         }
     }
 
-    fn queen_moves(&self, moves: &mut Vec<(usize, Move, usize)>) {
-        self.sliding_moves(&[0, 1, 2, 3, 4, 5, 6, 7], QUEEN, moves)
+    fn add_queen_moves(&self, moves: &mut Vec<(usize, Move, usize)>, only_captures: bool) {
+        self.sliding_moves(&[0, 1, 2, 3, 4, 5, 6, 7], QUEEN, moves, only_captures)
+    }
+
+    fn add_moves(&self, moves: &mut Vec<(usize, Move, usize)>, only_captures: bool) {
+        self.add_pawn_moves(moves, only_captures);
+        self.add_knight_moves(moves, only_captures);
+        self.add_bishop_moves(moves, only_captures);
+        self.add_rook_moves(moves, only_captures);
+        self.add_queen_moves(moves, only_captures);
+        self.add_king_moves(moves, only_captures);
+        self.add_castling_moves(moves);
     }
 
     pub fn make_move(&mut self, m: &Move, piece: usize) {
@@ -608,14 +666,102 @@ impl Board {
         self.turn = 1 - self.turn;
     }
 
-    fn alphabeta(
+    fn capture_search(
+        &self,
+        mut alpha: Eval,
+        mut beta: Eval,
+        cancel: Arc<AtomicBool>,
+        memo: &mut HashMap<Board, (Eval, Vec<Move>)>,
+    ) -> (Eval, usize, Vec<Move>) {
+        {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return (DRAW_EVAL, 0, Vec::new());
+            }
+        }
+
+        let mut moves = Vec::new();
+        if let Some(&(stored_score, ref stored_line)) = memo.get(self) {
+            return (stored_score, 1, stored_line.clone());
+        }
+
+        if self.is_checkmate_self() {
+            return if self.turn == 0 {
+                (
+                    Eval::mate_in(1), // TODO THIS IS BAD
+                    1,
+                    Vec::new(),
+                )
+            } else {
+                (-Eval::mate_in(1), 1, Vec::new())
+            };
+        }
+
+        if self.is_checkmate_opp() {
+            return if self.turn == 0 {
+                (-Eval::mate_in(1), 1, Vec::new())
+            } else {
+                (Eval::mate_in(1), 1, Vec::new())
+            };
+        }
+
+        if self.is_draw() {
+            return (DRAW_EVAL, 1, Vec::new());
+        }
+
+        let mut best_score = self.evaluate();
+
+        let mut best_line = Vec::new();
+        let mut nodes = 0;
+
+        self.add_moves(&mut moves, true);
+
+        self.debug(&format!("num moves: {}", moves.len()));
+
+        moves.sort_by(|a, b| b.2.cmp(&a.2));
+
+        for (piece, m, _) in &moves {
+            if m.flags() & CAPTURE == 0 {
+                continue;
+            }
+
+            let mut new_board = self.clone();
+            self.debug(&format!("Making move: {}", m));
+            new_board.make_move(m, *piece);
+            let mut score = new_board.capture_search(alpha, beta, cancel.clone(), memo);
+            score.2.push(*m);
+            nodes += score.1;
+
+            if self.turn == 0 {
+                if score.0 > best_score {
+                    best_score = score.0;
+                    best_line = score.2;
+                }
+                if best_score >= beta {
+                    break;
+                }
+                alpha = alpha.max(best_score);
+            } else if score.0 < best_score {
+                best_score = score.0;
+                best_line = score.2;
+                if best_score <= alpha {
+                    break;
+                }
+                beta = beta.min(best_score);
+            }
+        }
+
+        memo.insert(self.clone(), (best_score, best_line.clone()));
+        self.debug(&format!("returning score: {}", best_score));
+        (best_score, nodes, best_line)
+    }
+
+    fn search(
         &self,
         mut alpha: Eval,
         mut beta: Eval,
         depth: usize,
         start_depth: usize,
         cancel: Arc<AtomicBool>,
-        is_capture_search: bool,
         memo: &mut HashMap<Board, (usize, Eval, Vec<Move>, Vec<(usize, Move, usize)>)>,
     ) -> (Eval, usize, Vec<Move>) {
         {
@@ -671,46 +817,32 @@ impl Board {
             return (DRAW_EVAL, 1, Vec::new());
         }
 
-        if depth == 0 && !is_capture_search {
-            let large_depth = 10000;
-            return self.alphabeta(alpha, beta, large_depth, large_depth, cancel, true, memo);
+        if depth == 0 {
+            let mut memo2 = HashMap::new();
+            return self.capture_search(alpha, beta, cancel, &mut memo2);
         }
 
         let mut best_score = if self.turn == 0 { MIN_EVAL } else { MAX_EVAL };
-        if is_capture_search {
-            best_score = self.evaluate();
-        }
 
         let mut best_line = Vec::new();
         let mut nodes = 0;
 
-        self.pawn_moves(&mut moves);
-        self.knight_moves(&mut moves);
-        self.bishop_moves(&mut moves);
-        self.rook_moves(&mut moves);
-        self.queen_moves(&mut moves);
-        self.king_moves(&mut moves);
-        self.castling_moves(&mut moves);
+        self.add_moves(&mut moves, false);
 
         moves.sort_by(|a, b| b.2.cmp(&a.2));
 
-        for (piece, m, _) in &moves {
-            if is_capture_search && m.flags() & CAPTURE == 0 {
-                continue;
-            }
+        self.debug(&format!(
+            "Depth: {}, Moves generated: {}",
+            depth,
+            moves.len()
+        ));
 
+        for (piece, m, _) in &moves {
             let mut new_board = self.clone();
             //self.debug(&format!("Making move: {}", m));
             new_board.make_move(m, *piece);
-            let mut score = new_board.alphabeta(
-                alpha,
-                beta,
-                depth - 1,
-                start_depth,
-                cancel.clone(),
-                is_capture_search,
-                memo,
-            );
+            let mut score =
+                new_board.search(alpha, beta, depth - 1, start_depth, cancel.clone(), memo);
             score.2.push(*m);
             nodes += score.1;
 
@@ -733,9 +865,7 @@ impl Board {
             }
         }
 
-        if !is_capture_search {
-            memo.insert(self.clone(), (depth, best_score, best_line.clone(), moves));
-        }
+        memo.insert(self.clone(), (depth, best_score, best_line.clone(), moves));
         //self.debug(&format!("returning score: {}", best_score));
         (best_score, nodes, best_line)
     }
@@ -746,7 +876,7 @@ impl Board {
         cancel: Arc<AtomicBool>,
         memo: &mut HashMap<Board, (usize, Eval, Vec<Move>, Vec<(usize, Move, usize)>)>,
     ) -> (Eval, usize, Vec<Move>) {
-        let res = self.alphabeta(MIN_EVAL, MAX_EVAL, depth, depth, cancel, false, memo);
+        let res = self.search(MIN_EVAL, MAX_EVAL, depth, depth, cancel, memo);
         self.debug(&format!("Minimax result: {}", res.0));
         res
     }
