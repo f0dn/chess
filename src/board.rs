@@ -1,10 +1,14 @@
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::fmt::Formatter;
+use std::fmt::Result;
 use std::fs::OpenOptions;
 use std::hash::Hash;
+use std::hash::Hasher;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use crate::consts::*;
 use crate::eval::*;
@@ -31,7 +35,7 @@ pub struct Board {
 }
 
 impl Hash for Board {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         // TODO include en passant
         let mut hash: u64 = 0;
         for square in 0..64 {
@@ -276,6 +280,10 @@ impl Board {
 
                     let blocker_ray = SLIDING_MOVES[closest as usize][dir];
                     unavaliable |= blocker_ray;
+                }
+
+                if only_captures {
+                    continue;
                 }
 
                 let blockers = ray & friendly;
@@ -617,7 +625,9 @@ impl Board {
         self.add_rook_moves(moves, only_captures);
         self.add_queen_moves(moves, only_captures);
         self.add_king_moves(moves, only_captures);
-        self.add_castling_moves(moves);
+        if !only_captures {
+            self.add_castling_moves(moves);
+        }
     }
 
     pub fn make_move(&mut self, m: &Move, piece: usize) {
@@ -674,7 +684,7 @@ impl Board {
         memo: &mut HashMap<Board, (Eval, Vec<Move>)>,
     ) -> (Eval, usize, Vec<Move>) {
         {
-            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            if cancel.load(Ordering::Relaxed) {
                 return (DRAW_EVAL, 0, Vec::new());
             }
         }
@@ -715,17 +725,13 @@ impl Board {
 
         self.add_moves(&mut moves, true);
 
-        self.debug(&format!("num moves: {}", moves.len()));
+        //self.debug(&format!("num moves: {}", moves.len()));
 
         moves.sort_by(|a, b| b.2.cmp(&a.2));
 
         for (piece, m, _) in &moves {
-            if m.flags() & CAPTURE == 0 {
-                continue;
-            }
-
             let mut new_board = self.clone();
-            self.debug(&format!("Making move: {}", m));
+            //self.debug(&format!("Making move: {}", m));
             new_board.make_move(m, *piece);
             let mut score = new_board.capture_search(alpha, beta, cancel.clone(), memo);
             score.2.push(*m);
@@ -751,7 +757,7 @@ impl Board {
         }
 
         memo.insert(self.clone(), (best_score, best_line.clone()));
-        self.debug(&format!("returning score: {}", best_score));
+        //self.debug(&format!("returning score: {}", best_score));
         (best_score, nodes, best_line)
     }
 
@@ -765,7 +771,7 @@ impl Board {
         memo: &mut HashMap<Board, (usize, Eval, Vec<Move>, Vec<(usize, Move, usize)>)>,
     ) -> (Eval, usize, Vec<Move>) {
         {
-            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            if cancel.load(Ordering::Relaxed) {
                 return (DRAW_EVAL, 0, Vec::new());
             }
         }
@@ -831,11 +837,11 @@ impl Board {
 
         moves.sort_by(|a, b| b.2.cmp(&a.2));
 
-        self.debug(&format!(
-            "Depth: {}, Moves generated: {}",
-            depth,
-            moves.len()
-        ));
+        //self.debug(&format!(
+        //    "Depth: {}, Moves generated: {}",
+        //    depth,
+        //    moves.len()
+        //));
 
         for (piece, m, _) in &moves {
             let mut new_board = self.clone();
@@ -895,7 +901,7 @@ impl Board {
 }
 
 impl Display for Board {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         for rank in (0..8).rev() {
             write!(f, "{} ", rank + 1)?;
             for file in 0..8 {
