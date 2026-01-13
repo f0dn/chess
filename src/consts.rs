@@ -214,6 +214,7 @@ pub const KING_MOVES: [u64; 64] = king_moves();
 pub const CASTLING_KING_FROM_SQUARE: [u16; 2] = [4, 60];
 pub const CASTLING_KING_TO_SQUARE: [[u16; 2]; 2] = [[2, 6], [58, 62]];
 pub const CASTLING_ROOK_FROM_SQUARE: [[u16; 2]; 2] = [[0, 7], [56, 63]];
+pub const CASTLING_ROOK_TO_SQUARE: [[u16; 2]; 2] = [[3, 5], [59, 61]];
 const CASTLING_KING_FROM: [u64; 2] = [1 << 4, 1 << 60];
 const CASTLING_KING_TO: [[u64; 2]; 2] = [[1 << 2, 1 << 6], [1 << 58, 1 << 62]];
 const CASTLING_ROOK_FROM: [[u64; 2]; 2] = [[1 << 0, 1 << 7], [1 << 56, 1 << 63]];

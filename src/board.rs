@@ -29,6 +29,7 @@ pub fn print_bitboard(bb: u64) {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Board {
+    hash: u64,
     bitboards: [u64; 12],
     pub turn: u8,
     pub castling_rights: u8,
@@ -36,27 +37,14 @@ pub struct Board {
 
 impl Hash for Board {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // TODO include en passant
-        let mut hash: u64 = 0;
-        for square in 0..64 {
-            let mask = 1 << square;
-            for (i, &bb) in self.bitboards.iter().enumerate() {
-                if (bb & mask) != 0 {
-                    hash ^= ZOBRIST_TABLE[square as usize][i];
-                }
-            }
-        }
-        if self.turn == 1 {
-            hash ^= ZOBRIST_BLACK_TO_MOVE;
-        }
-        hash ^= ZOBRIST_CASTLING_RIGHTS[self.castling_rights as usize];
-        state.write_u64(hash);
+        state.write_u64(self.hash);
     }
 }
 
 impl Board {
     pub fn from_fen(fen: &str) -> Self {
         let mut board = Board {
+            hash: 0,
             bitboards: [0; 12],
             turn: 0,
             castling_rights: 0,
@@ -100,6 +88,20 @@ impl Board {
                 _ => panic!("Invalid FEN: invalid castling rights"),
             }
         }
+
+        // calculate zobrist hash
+        for square in 0..64 {
+            let mask = 1 << square;
+            for (i, &bb) in board.bitboards.iter().enumerate() {
+                if (bb & mask) != 0 {
+                    board.hash ^= ZOBRIST_TABLE[square as usize][i];
+                }
+            }
+        }
+        if board.turn == 1 {
+            board.hash ^= ZOBRIST_BLACK_TO_MOVE;
+        }
+        board.hash ^= ZOBRIST_CASTLING_RIGHTS[board.castling_rights as usize];
 
         board
     }
@@ -214,6 +216,30 @@ impl Board {
                 return Some(i);
             }
         }
+        None
+    }
+
+    fn end_game_eval(&self) -> Option<Eval> {
+        if self.is_draw() {
+            return Some(DRAW_EVAL);
+        }
+
+        if self.is_checkmate_self() {
+            return Some(if self.turn == 0 {
+                -Eval::mate_in(0)
+            } else {
+                Eval::mate_in(0)
+            });
+        }
+
+        if self.is_checkmate_opp() {
+            return Some(if self.turn == 0 {
+                Eval::mate_in(0)
+            } else {
+                -Eval::mate_in(0)
+            });
+        }
+
         None
     }
 
@@ -637,6 +663,9 @@ impl Board {
         let opp_to_mask = !to_mask;
 
         self.bitboards[piece + 6 * self.turn as usize] ^= from_mask | to_mask;
+        self.hash ^= ZOBRIST_TABLE[m.from() as usize][piece + 6 * self.turn as usize];
+        self.hash ^= ZOBRIST_TABLE[m.to() as usize][piece + 6 * self.turn as usize];
+        self.hash ^= ZOBRIST_CASTLING_RIGHTS[self.castling_rights as usize];
 
         if piece == KING {
             self.castling_rights &=
@@ -653,7 +682,10 @@ impl Board {
 
         if flags & CAPTURE != 0 {
             for i in (6 * (1 - self.turn))..(6 * ((1 - self.turn) + 1)) {
-                self.bitboards[i as usize] &= opp_to_mask;
+                if (self.bitboards[i as usize] & to_mask) != 0 {
+                    self.hash ^= ZOBRIST_TABLE[m.to() as usize][i as usize];
+                    self.bitboards[i as usize] &= opp_to_mask;
+                }
             }
 
             for dir in [KING_CASTLE, QUEEN_CASTLE] {
@@ -666,12 +698,25 @@ impl Board {
         if flags & PROMOTION != 0 {
             self.bitboards[PAWN + self.turn as usize * 6] ^= to_mask;
             self.bitboards[(flags & 0b11) as usize + self.turn as usize * 6] ^= to_mask;
+
+            self.hash ^= ZOBRIST_TABLE[m.to() as usize][PAWN + self.turn as usize * 6];
+            self.hash ^=
+                ZOBRIST_TABLE[m.to() as usize][(flags & 0b11) as usize + self.turn as usize * 6];
         }
 
         if flags == QUEEN_CASTLE || flags == KING_CASTLE {
             self.bitboards[ROOK + self.turn as usize * 6] ^=
                 CASTLING_ROOK_MASK[self.turn as usize][flags as usize - 1];
+            self.hash ^= ZOBRIST_TABLE
+                [CASTLING_ROOK_FROM_SQUARE[self.turn as usize][flags as usize - 1] as usize]
+                [ROOK + self.turn as usize * 6];
+            self.hash ^= ZOBRIST_TABLE
+                [CASTLING_ROOK_TO_SQUARE[self.turn as usize][flags as usize - 1] as usize]
+                [ROOK + self.turn as usize * 6];
         }
+
+        self.hash ^= ZOBRIST_CASTLING_RIGHTS[self.castling_rights as usize];
+        self.hash ^= ZOBRIST_BLACK_TO_MOVE;
 
         self.turn = 1 - self.turn;
     }
@@ -694,28 +739,8 @@ impl Board {
             return (stored_score, 1, stored_line.clone());
         }
 
-        if self.is_checkmate_self() {
-            return if self.turn == 0 {
-                (
-                    Eval::mate_in(1), // TODO THIS IS BAD
-                    1,
-                    Vec::new(),
-                )
-            } else {
-                (-Eval::mate_in(1), 1, Vec::new())
-            };
-        }
-
-        if self.is_checkmate_opp() {
-            return if self.turn == 0 {
-                (-Eval::mate_in(1), 1, Vec::new())
-            } else {
-                (Eval::mate_in(1), 1, Vec::new())
-            };
-        }
-
-        if self.is_draw() {
-            return (DRAW_EVAL, 1, Vec::new());
+        if let Some(end_eval) = self.end_game_eval() {
+            return (end_eval, 1, Vec::new());
         }
 
         let mut best_score = self.evaluate();
@@ -787,40 +812,8 @@ impl Board {
             }
         }
 
-        if self.is_checkmate_self() {
-            return if self.turn == 0 {
-                (
-                    Eval::mate_in(start_depth as i32 - depth as i32 - 1),
-                    1,
-                    Vec::new(),
-                )
-            } else {
-                (
-                    -Eval::mate_in(start_depth as i32 - depth as i32 - 1),
-                    1,
-                    Vec::new(),
-                )
-            };
-        }
-
-        if self.is_checkmate_opp() {
-            return if self.turn == 0 {
-                (
-                    -Eval::mate_in(start_depth as i32 - depth as i32 - 1),
-                    1,
-                    Vec::new(),
-                )
-            } else {
-                (
-                    Eval::mate_in(start_depth as i32 - depth as i32 - 1),
-                    1,
-                    Vec::new(),
-                )
-            };
-        }
-
-        if self.is_draw() {
-            return (DRAW_EVAL, 1, Vec::new());
+        if let Some(end_eval) = self.end_game_eval() {
+            return (end_eval, 1, Vec::new());
         }
 
         if depth == 0 {
@@ -871,6 +864,7 @@ impl Board {
             }
         }
 
+        best_score = best_score.add_mate_steps(1);
         memo.insert(self.clone(), (depth, best_score, best_line.clone(), moves));
         //self.debug(&format!("returning score: {}", best_score));
         (best_score, nodes, best_line)

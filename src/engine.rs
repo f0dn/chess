@@ -252,6 +252,11 @@ impl Engine {
                 }
                 best_move = best_line[best_line.len() - 1];
                 let cp = if board.turn == 0 { eval } else { -eval };
+                let num_skip = if let Some(_) = eval.steps_to_mate() {
+                    2
+                } else {
+                    0
+                };
                 println!(
                     "info depth {} nodes {} nps {} time {} score {} pv {}",
                     depth,
@@ -261,6 +266,7 @@ impl Engine {
                     cp,
                     best_line
                         .iter()
+                        .skip(num_skip)
                         .rev()
                         .map(|m| m.to_string())
                         .collect::<Vec<String>>()
