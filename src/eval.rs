@@ -15,6 +15,7 @@ pub struct Eval {
 }
 
 impl Eval {
+    // TODO this is so ugly
     pub fn new(eval: i32) -> Self {
         Self { eval }
     }
@@ -30,8 +31,16 @@ impl Eval {
     }
 
     pub fn add_mate_steps(&self, steps: i32) -> Self {
-        if let Some(s) = self.steps_to_mate() {
-            Self::mate_in(s + steps)
+        if self.eval.abs() >= CHECKMATE_BOUND {
+            if self.eval > 0 {
+                Self {
+                    eval: self.eval - steps,
+                }
+            } else {
+                Self {
+                    eval: self.eval + steps,
+                }
+            }
         } else {
             *self
         }

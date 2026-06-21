@@ -240,7 +240,7 @@ impl Engine {
                 }
                 time_thread_cancel.store(true, Ordering::Relaxed);
             });
-            let mut depth = 1;
+            let mut depth = options.depth.unwrap_or(1);
             let mut best_move = Move::new(0, 0, 0);
             loop {
                 let start = Instant::now();
@@ -274,6 +274,10 @@ impl Engine {
                 );
                 //print_bitboard(self.board.attacked_squares(1 - self.board.turn));
                 depth += 1;
+
+                if options.depth.is_some() {
+                    break;
+                }
             }
             Engine::debug(&format!("Best move chosen: {}", best_move));
             println!("bestmove {}", best_move);

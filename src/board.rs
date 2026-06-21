@@ -221,7 +221,7 @@ impl Board {
 
     fn end_game_eval(&self) -> Option<Eval> {
         if self.is_draw() {
-            return Some(DRAW_EVAL);
+            //return Some(DRAW_EVAL);
         }
 
         if self.is_checkmate_self() {
@@ -233,6 +233,7 @@ impl Board {
         }
 
         if self.is_checkmate_opp() {
+            unreachable!();
             return Some(if self.turn == 0 {
                 Eval::mate_in(0)
             } else {
@@ -743,12 +744,16 @@ impl Board {
             return (end_eval, 1, Vec::new());
         }
 
-        let mut best_score = self.evaluate();
+        let mut best_score = if self.turn == 0 { MIN_EVAL } else { MAX_EVAL };
 
         let mut best_line = Vec::new();
         let mut nodes = 0;
 
         self.add_moves(&mut moves, true);
+
+        if moves.is_empty() {
+            return (self.evaluate(), 1, Vec::new());
+        }
 
         //self.debug(&format!("num moves: {}", moves.len()));
 
@@ -781,6 +786,7 @@ impl Board {
             }
         }
 
+        best_score = best_score.add_mate_steps(1);
         memo.insert(self.clone(), (best_score, best_line.clone()));
         //self.debug(&format!("returning score: {}", best_score));
         (best_score, nodes, best_line)
@@ -838,7 +844,7 @@ impl Board {
 
         for (piece, m, _) in &moves {
             let mut new_board = self.clone();
-            //self.debug(&format!("Making move: {}", m));
+            //self.debug(&format!("Depth {}: Making move: {}", depth, m));
             new_board.make_move(m, *piece);
             let mut score =
                 new_board.search(alpha, beta, depth - 1, start_depth, cancel.clone(), memo);
